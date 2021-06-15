@@ -1,6 +1,6 @@
 ---
 
-- hosts: mongodb
+- hosts: teamcity-agents
 
   remote_user: ec2-user
   become: yes
@@ -22,6 +22,7 @@
         packages:
         - python3-pip
         - yum-utils
+        - java-1.8.0-openjdk
         - amazon-linux-extras
 
     - name: Add extras repository
@@ -45,35 +46,75 @@
         - python3.8
         - docker
 
+    - name: Add ec2-user to docker group
+      user:
+        name: ec2-user
+        groups: ['docker']
+
     - name: Enable Docker CE service at startup
       service:
         name: docker
         state: started
         enabled: yes
 
-    - name: Upgrade pip3
-      shell: "python3.8 -m pip install pip --upgrade"
+    - name: Create an empty agent directory
+      file:
+        path: /home/ec2-user/agents
+        state: directory
+        mode: 0755
+        owner: ec2-user
+        group: ec2-user
 
-    - name: Ensure Python pip packages are installed
-      pip:
-        name: "{{ packages }}"
-        executable: /usr/local/bin/pip3.8
-      vars:
-        packages:
-          - boto
-          - boto3
-          - docker
-          - docker-compose
+    - name: download the zip file
+      get_url:
+        url: http://{{ teamcity_server_public_url }}/update/buildAgentFull.zip
+        dest: /home/ec2-user/agents/buildAgentFull.zip
+        mode: '0655'
 
-    - name: Re-create a teamcity container
-      vars:
-        ansible_python_interpreter: /usr/bin/python3.8
-      docker_container:
-        name: teamcity-server
-        image: jetbrains/teamcity-server
-        state: started
-        recreate: yes
-        restart: yes
-        ports:
-          - "80:8111"
+    - name : unzip the agent zip
+      unarchive:
+        src: "/home/ec2-user/agents/buildAgentFull.zip"
+        remote_src: True
+        dest: "/home/ec2-user/agents"
+
+    - name: rename the build.dist.properties file
+      shell: mv /home/ec2-user/agents/conf/buildAgent.dist.properties /home/ec2-user/agents/conf/buildAgent.properties
+
+    - name: replace the server url
+      lineinfile:
+        path: /home/ec2-user/agents/conf/buildAgent.properties
+        regexp: '^serverUrl=.*'
+        line: 'serverUrl=http://{{ teamcity_server_url }}/'
+        owner: ec2-user
+        group: ec2-user
+        mode: 0655
+
+    - name: start the teamcity agent
+      shell: /home/ec2-user/agents/bin/agent.sh start
+
+#    - name: Upgrade pip3
+#      shell: "python3.8 -m pip install pip --upgrade"
+#
+#    - name: Ensure Python pip packages are installed
+#      pip:
+#        name: "{{ packages }}"
+#        executable: /usr/local/bin/pip3.8
+#      vars:
+#        packages:
+#          - boto
+#          - boto3
+#          - docker
+#          - docker-compose
+#
+#    - name: Re-create a teamcity container
+#      vars:
+#        ansible_python_interpreter: /usr/bin/python3.8
+#      docker_container:
+#        name: teamcity-server
+#        image: jetbrains/teamcity-server
+#        state: started
+#        recreate: yes
+#        restart: yes
+#        ports:
+#          - "80:8111"
 
